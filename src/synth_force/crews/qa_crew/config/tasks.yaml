@@ -1,0 +1,37 @@
+test_pr:
+  description: >
+    Test pull request #{pr_number} in repository '{repo_full_name}'.
+
+    1. Read the PR details to understand what was implemented
+    2. Use the Playwright browser tool to test the deployed changes at
+       the provided test URL: {test_url}
+    3. Verify each acceptance criterion from the original ticket
+    4. Document test results with pass/fail for each criterion
+
+    Return test results as JSON:
+    {"qa_status": "passed"} or {"qa_status": "failed", "failures": ["..."]}
+  expected_output: >
+    JSON object with qa_status ('passed' or 'failed') and optional
+    list of failures.
+  agent: qa_engineer
+
+update_ticket_status:
+  description: >
+    Update ticket #{ticket_issue_number} in repository '{repo_full_name}'
+    with the QA test results.
+
+    If QA passed:
+    - Add label 'qa-passed'
+    - Add a comment summarizing the test results
+    - Close the issue
+
+    If QA failed:
+    - Add label 'qa-failed'
+    - Add a comment detailing which tests failed and why
+
+    Return the updated status as JSON:
+    {"ticket_issue_number": N, "qa_status": "{qa_status}"}
+  expected_output: >
+    JSON object confirming the ticket update with ticket_issue_number
+    and qa_status.
+  agent: qa_engineer

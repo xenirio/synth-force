@@ -1,0 +1,19 @@
+analyze_epic:
+  description: >
+    Read the epic issue from the GitHub repository '{repo_full_name}' with
+    issue number {epic_issue_number}.
+
+    Analyze the epic's requirements and break it down into individual task
+    issues. For each task:
+    1. Create a GitHub issue in the same repository
+    2. Give it a clear, specific title
+    3. Include detailed acceptance criteria in the body
+    4. Add the label 'task'
+
+    Return a JSON array of the created tasks with their issue numbers,
+    URLs, and titles. Format:
+    [{"issue_number": 1, "issue_url": "https://...", "title": "..."}]
+  expected_output: >
+    A JSON array of created task issues, each with issue_number, issue_url,
+    and title fields.
+  agent: system_analyst

@@ -1,0 +1,55 @@
+create_ticket:
+  description: >
+    For the task issue #{task_issue_number} in repository '{repo_full_name}',
+    read the task details and create a detailed implementation ticket as a
+    new GitHub issue.
+
+    The ticket should include:
+    - A clear title prefixed with "[Ticket]"
+    - Technical specifications for implementation
+    - File paths that need to be created or modified
+    - Acceptance criteria
+    - Add the label 'ticket'
+
+    Return the created ticket's issue_number, issue_url, and title as JSON:
+    {"issue_number": N, "issue_url": "https://...", "title": "..."}
+  expected_output: >
+    JSON object with the ticket's issue_number, issue_url, and title.
+  agent: senior_software_engineer
+
+implement_code:
+  description: >
+    Read the implementation ticket #{ticket_issue_number} in repository
+    '{repo_full_name}'.
+
+    Based on the ticket's technical specifications:
+    1. Create a new branch named 'feature/ticket-{ticket_issue_number}'
+    2. Write the required code files using the git_write_file tool
+    3. Open a pull request from the feature branch to main
+    4. Reference the ticket in the PR body with "Closes #{ticket_issue_number}"
+
+    Return the PR number and URL as JSON:
+    {"pr_number": N, "pr_url": "https://..."}
+  expected_output: >
+    JSON object with the PR's pr_number and pr_url.
+  agent: software_engineer
+
+review_code:
+  description: >
+    Review pull request #{pr_number} in repository '{repo_full_name}'.
+
+    Read the PR details and diff. Evaluate:
+    - Does the code fulfill the ticket requirements?
+    - Is the code clean and well-structured?
+    - Are there any bugs or issues?
+
+    If the code is good, approve the PR with event 'APPROVE' and merge it.
+    If changes are needed, submit a review with event 'REQUEST_CHANGES'
+    and explain what needs to be fixed.
+
+    Return the review result as JSON:
+    {"review_status": "approved"} or {"review_status": "changes_requested", "feedback": "..."}
+  expected_output: >
+    JSON object with review_status ('approved' or 'changes_requested')
+    and optional feedback.
+  agent: senior_software_engineer

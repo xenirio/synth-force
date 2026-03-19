@@ -1,0 +1,33 @@
+create_release:
+  description: >
+    Create a GitHub release for repository '{repo_full_name}'.
+
+    1. Use tag '{release_tag}' (e.g. 'v1.0.0')
+    2. Set the release title to '{release_name}'
+    3. Include release notes summarizing the changes from the tickets:
+       {ticket_summaries}
+    4. Target the 'main' branch
+
+    Return the release details as JSON:
+    {"release_tag": "...", "release_url": "https://..."}
+  expected_output: >
+    JSON object with release_tag and release_url.
+  agent: devops_engineer
+
+deploy:
+  description: >
+    Deploy the release '{release_tag}' to the Kubernetes cluster.
+
+    1. Authenticate with GCP project '{gcp_project_id}' and cluster
+       '{gke_cluster_name}' in region '{gcp_region}'
+    2. Deploy image '{container_image}' to deployment '{deployment_name}'
+       in namespace '{k8s_namespace}'
+
+    Note: This is currently stubbed. The tools will log the deployment
+    details without actually executing.
+
+    Return the deployment status as JSON:
+    {"deployment_status": "stubbed_success", "details": "..."}
+  expected_output: >
+    JSON object with deployment_status and details.
+  agent: devops_engineer
