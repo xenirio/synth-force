@@ -1,54 +1,100 @@
-# SynthForce Crew
+# SynthForce
 
-Welcome to the SynthForce Crew project, powered by [crewAI](https://crewai.com). This template is designed to help you set up a multi-agent AI system with ease, leveraging the powerful and flexible framework provided by crewAI. Our goal is to enable your agents to collaborate effectively on complex tasks, maximizing their collective intelligence and capabilities.
+Multi-agent software development pipeline powered by [CrewAI](https://crewai.com). SynthForce reads a GitHub epic issue and autonomously breaks it into tasks, writes code, opens PRs, reviews, fixes CI failures, and deploys to Vercel.
 
-## Installation
+## Pipeline
 
-Ensure you have Python >=3.10 <3.14 installed on your system. This project uses [UV](https://docs.astral.sh/uv/) for dependency management and package handling, offering a seamless setup and execution experience.
-
-First, if you haven't already, install uv:
-
-```bash
-pip install uv
+```
+Epic (GitHub Issue)
+  -> Analysis Crew: breaks epic into 1-3 task issues
+    -> CI Setup: detects app type, commits ci.yml to main
+      -> Engineering Crew (x2 parallel):
+           Senior SE creates ticket
+           SE writes code + opens PR
+           Senior SE reviews + checks CI
+           SE fixes CI failures
+           Senior SE merges PR
+        -> QA Crew: tests PRs (optional, skippable)
+          -> DevOps Crew: commits deploy.yml, monitors pipeline, creates release
 ```
 
-Next, navigate to your project directory and install the dependencies:
+## Setup
 
-(Optional) Lock the dependencies and install them by using the CLI command:
+Requires Python >=3.10 <3.14 and [uv](https://docs.astral.sh/uv/).
+
 ```bash
 crewai install
 ```
-### Customizing
 
-**Add your `OPENAI_API_KEY` into the `.env` file**
+### Environment Variables
 
-- Modify `src/synth_force/config/agents.yaml` to define your agents
-- Modify `src/synth_force/config/tasks.yaml` to define your tasks
-- Modify `src/synth_force/crew.py` to add your own logic, tools and specific args
-- Modify `src/synth_force/main.py` to add custom inputs for your agents and tasks
+Create a `.env` file:
 
-## Running the Project
-
-To kickstart your crew of AI agents and begin task execution, run this from the root folder of your project:
-
-```bash
-$ crewai run
+```
+MODEL=gemini/gemini-2.5-flash
+GEMINI_API_KEY=your-key
+GITHUB_TOKEN=your-github-pat-with-repo-scope
 ```
 
-This command initializes the synth-force Crew, assembling the agents and assigning them tasks as defined in your configuration.
+## Usage
 
-This example, unmodified, will run the create a `report.md` file with the output of a research on LLMs in the root folder.
+### Run full pipeline
 
-## Understanding Your Crew
+```bash
+uv run synth_force <epic_issue_url>
 
-The synth-force Crew is composed of multiple AI agents, each with unique roles, goals, and tools. These agents collaborate on a series of tasks, defined in `config/tasks.yaml`, leveraging their collective skills to achieve complex objectives. The `config/agents.yaml` file outlines the capabilities and configurations of each agent in your crew.
+# Skip QA and/or DevOps phases
+uv run synth_force <epic_issue_url> --skip qa
+uv run synth_force <epic_issue_url> --skip qa --skip devops
+```
 
-## Support
+### Continue incomplete work
 
-For support, questions, or feedback regarding the SynthForce Crew or crewAI.
-- Visit our [documentation](https://docs.crewai.com)
-- Reach out to us through our [GitHub repository](https://github.com/joaomdmoura/crewai)
-- [Join our Discord](https://discord.com/invite/X4JWnZnxPb)
-- [Chat with our docs](https://chatg.pt/DWjSBZn)
+Scans open issues and routes them to the appropriate crew:
 
-Let's create wonders together with the power and simplicity of crewAI.
+```bash
+uv run synth_continue <owner/repo>
+uv run synth_continue <owner/repo> --dry-run
+```
+
+### Run a single crew
+
+```bash
+uv run synth_crew <crew> <owner/repo> [key=value ...]
+
+# Examples
+uv run synth_crew analysis xenirio/trader-board epic_issue_number=1
+uv run synth_crew engineering xenirio/trader-board task_issue_number=5
+uv run synth_crew devops xenirio/trader-board release_tag=v0.2.0
+```
+
+### Reset target repo
+
+```bash
+uv run python scripts/reset_repo.py <owner/repo>
+```
+
+## Crews
+
+| Crew | Agents | Role |
+|------|--------|------|
+| **Analysis** | System Analyst | Reads epic, creates task issues |
+| **Engineering** | Senior SE, SE, SE 2 | Tickets, code, PRs, CI fixes, review, merge |
+| **QA** | QA Engineer | Tests PRs (Playwright MCP - placeholder) |
+| **DevOps** | DevOps Engineer | CI/CD workflows, deploy monitoring, releases |
+
+## Project Structure
+
+```
+src/synth_force/
+  main.py              # SynthForceFlow orchestrator + CLI commands
+  state.py             # Flow state (Pydantic models)
+  crews/
+    analysis_crew/     # Epic -> task issues
+    engineering_crew/  # Task -> ticket -> code -> PR -> merge
+    qa_crew/           # PR testing
+    devops_crew/       # CI/CD + deploy + release
+  tools/
+    github_tools.py    # PyGithub tools (issues, PRs, branches, files)
+    k8s_tools.py       # Repo analysis, workflow generation, deploy monitoring
+```
