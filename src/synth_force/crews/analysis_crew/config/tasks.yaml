@@ -3,8 +3,15 @@ analyze_epic:
     Read the epic issue from the GitHub repository '{repo_full_name}' with
     issue number {epic_issue_number}.
 
-    Analyze the epic's requirements and break it down into individual task
-    issues. For each task:
+    Analyze the epic's requirements and break it down into task issues.
+
+    IMPORTANT: Keep the number of tasks small — prefer fewer, larger tasks
+    over many small ones. Combine related work into a single task. For
+    example, "set up project and build the page" is better than splitting
+    into "set up project", "create hero", "create footer" as separate tasks.
+    Aim for 1-3 tasks total unless the epic is truly complex.
+
+    For each task:
     1. Create a GitHub issue in the same repository
     2. Give it a clear, specific title
     3. Include detailed acceptance criteria in the body

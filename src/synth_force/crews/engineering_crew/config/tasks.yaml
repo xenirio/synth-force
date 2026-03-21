@@ -33,6 +33,16 @@ implement_code:
     5. Open a pull request from the feature branch to main using github_create_pr
     6. Reference the ticket in the PR body with "Closes #<TICKET_NUMBER>"
 
+    CRITICAL RULES:
+    - If creating a new project, you MUST create package.json (or equivalent)
+      with all required dependencies FIRST before creating any other files.
+    - For Next.js apps: package.json must include next, react, react-dom as
+      dependencies. Also create next.config.js.
+    - ALL files must go inside the `app/` directory for Next.js App Router.
+      Do NOT create files in root-level `components/`, `styles/`, or `pages/`
+      directories. Components go in `app/components/`, styles in `app/` alongside
+      their components.
+
     Return the PR number, URL, and ticket issue number as JSON:
     {{"pr_number": N, "pr_url": "https://...", "ticket_issue_number": N}}
   expected_output: >

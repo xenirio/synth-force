@@ -26,3 +26,4 @@ class SynthForceState(BaseModel):
     tickets: list[Ticket] = []
     release_tag: str = ""
     deployment_status: str = ""
+    skip_phases: list[str] = []  # e.g. ["qa", "devops"]

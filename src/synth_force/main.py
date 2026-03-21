@@ -102,11 +102,16 @@ class SynthForceFlow(Flow[SynthForceState]):
 
     @listen(setup_ci)
     def engineer_tasks(self):
-        """Phase 2: For each task, create ticket, implement code, and review."""
+        """Phase 2: For each task, create ticket, implement code, and review.
+
+        Uses two SE agents to process tickets in parallel (pairs).
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         all_tickets = []
         repo_full_name = f"{self.state.repo_owner}/{self.state.repo_name}"
 
-        for task in self.state.tasks:
+        def _process_task(task):
             print(f"[ENGINEERING] Working on task #{task.issue_number}")
             ticket_result = (
                 EngineeringCrew()
@@ -119,7 +124,7 @@ class SynthForceFlow(Flow[SynthForceState]):
                 )
             )
             ticket_data = _parse_json(ticket_result.raw)
-            ticket = Ticket(
+            return Ticket(
                 issue_number=ticket_data.get("issue_number", 0),
                 issue_url=ticket_data.get("issue_url", ""),
                 title=ticket_data.get("title", ""),
@@ -128,7 +133,19 @@ class SynthForceFlow(Flow[SynthForceState]):
                 review_status=ticket_data.get("review_status", ""),
                 ci_status=ticket_data.get("ci_status", ""),
             )
-            all_tickets.append(ticket)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {
+                pool.submit(_process_task, task): task
+                for task in self.state.tasks
+            }
+            for future in as_completed(futures):
+                task = futures[future]
+                try:
+                    ticket = future.result()
+                    all_tickets.append(ticket)
+                except Exception as e:
+                    print(f"[ENGINEERING] Task #{task.issue_number} failed: {e}")
 
         self.state.tickets = all_tickets
         return all_tickets
@@ -159,6 +176,12 @@ class SynthForceFlow(Flow[SynthForceState]):
     @listen(or_("qa_ready", handle_review_failure))
     def run_qa(self):
         """Phase 3: QA tests each PR via Playwright browser testing."""
+        if "qa" in self.state.skip_phases:
+            print("[QA] Skipped (--skip qa)")
+            for ticket in self.state.tickets:
+                ticket.qa_status = "skipped"
+            return self.state.tickets
+
         repo_full_name = f"{self.state.repo_owner}/{self.state.repo_name}"
 
         for ticket in self.state.tickets:
@@ -184,6 +207,8 @@ class SynthForceFlow(Flow[SynthForceState]):
     @router(run_qa)
     def check_qa(self):
         """Route based on QA outcomes."""
+        if "qa" in self.state.skip_phases:
+            return "deploy_ready"
         all_passed = all(
             t.qa_status == "passed"
             for t in self.state.tickets
@@ -245,6 +270,10 @@ class SynthForceFlow(Flow[SynthForceState]):
     @listen(or_("deploy_ready", handle_qa_failure))
     def deploy(self):
         """Phase 4: Analyze repo, set up CI/CD, and create release."""
+        if "devops" in self.state.skip_phases:
+            print("[DEVOPS] Skipped (--skip devops)")
+            return {"deployment_status": "skipped", "platform": "skipped"}
+
         repo_full_name = f"{self.state.repo_owner}/{self.state.repo_name}"
         ticket_summaries = "; ".join(
             f"#{t.issue_number} {t.title}" for t in self.state.tickets
@@ -286,12 +315,26 @@ class SynthForceFlow(Flow[SynthForceState]):
 
 
 def run():
-    """Run the flow."""
-    epic_url = sys.argv[1] if len(sys.argv) > 1 else ""
+    """Run the flow.
+
+    Usage: synth_force <epic_issue_url> [--skip qa] [--skip devops]
+    """
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    epic_url = args[0] if args else ""
     if not epic_url:
-        print("Usage: synth_force <epic_issue_url>")
-        print("  e.g. synth_force https://github.com/owner/repo/issues/1")
+        print("Usage: synth_force <epic_issue_url> [--skip qa] [--skip devops]")
+        print("  e.g. synth_force https://github.com/owner/repo/issues/1 --skip qa")
         sys.exit(1)
+
+    # Parse --skip flags
+    skip_phases = []
+    skip_next = False
+    for a in sys.argv[1:]:
+        if skip_next:
+            skip_phases.append(a.lower())
+            skip_next = False
+        elif a == "--skip":
+            skip_next = True
 
     # Parse owner/repo from URL
     parts = epic_url.rstrip("/").split("/")
@@ -299,10 +342,14 @@ def run():
     owner = parts[-4]
     repo = parts[-3]
 
+    if skip_phases:
+        print(f"[CONFIG] Skipping phases: {', '.join(skip_phases)}")
+
     flow = SynthForceFlow()
     flow.state.repo_owner = owner
     flow.state.repo_name = repo
     flow.state.epic_url = epic_url
+    flow.state.skip_phases = skip_phases
     flow.kickoff()
 
 

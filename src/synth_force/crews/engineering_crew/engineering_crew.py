@@ -54,6 +54,22 @@ class EngineeringCrew:
             verbose=True,
         )
 
+    @agent
+    def software_engineer_2(self) -> Agent:
+        return Agent(
+            config=self.agents_config["software_engineer_2"],  # type: ignore[index]
+            tools=[
+                GitHubReadIssueTool(),
+                GitHubCreateBranchTool(),
+                GitWriteFileTool(),
+                GitHubCreatePRTool(),
+                GitHubReadFileContentTool(),
+                CheckPRCIStatusTool(),
+            ],
+            max_iter=15,
+            verbose=True,
+        )
+
     @task
     def create_ticket(self) -> Task:
         return Task(
