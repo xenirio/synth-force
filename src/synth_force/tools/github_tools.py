@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Type
 
 from crewai.tools import BaseTool
@@ -36,6 +37,12 @@ class UpdateIssueInput(BaseModel):
     state: str = Field("", description="State to set: 'open' or 'closed'")
 
 
+class CreateBranchInput(BaseModel):
+    repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
+    branch_name: str = Field(..., description="Name of the new branch")
+    from_branch: str = Field("main", description="Branch to create from")
+
+
 class WriteFileInput(BaseModel):
     repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
     file_path: str = Field(..., description="Path of the file in the repo")
@@ -57,6 +64,17 @@ class ReadPRInput(BaseModel):
     pr_number: int = Field(..., description="Pull request number")
 
 
+class ReadPRDiffInput(BaseModel):
+    repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
+    pr_number: int = Field(..., description="Pull request number")
+
+
+class ReadFileContentInput(BaseModel):
+    repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
+    file_path: str = Field(..., description="Path to the file in the repo")
+    branch: str = Field("main", description="Branch to read from")
+
+
 class ReviewPRInput(BaseModel):
     repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
     pr_number: int = Field(..., description="Pull request number")
@@ -70,6 +88,15 @@ class MergePRInput(BaseModel):
     repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
     pr_number: int = Field(..., description="Pull request number")
     merge_method: str = Field("squash", description="Merge method: merge, squash, rebase")
+
+
+class CheckPRCIStatusInput(BaseModel):
+    repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
+    pr_number: int = Field(..., description="Pull request number")
+    wait_seconds: int = Field(
+        120,
+        description="Max seconds to wait for CI checks to complete (polls every 15s)",
+    )
 
 
 class CreateReleaseInput(BaseModel):
@@ -152,6 +179,27 @@ class GitHubUpdateIssueTool(BaseTool):
         return f"Updated issue #{issue_number}: {'; '.join(results) or 'no changes'}"
 
 
+class GitHubCreateBranchTool(BaseTool):
+    name: str = "github_create_branch"
+    description: str = "Create a new branch in a GitHub repository from an existing branch."
+    args_schema: Type[BaseModel] = CreateBranchInput
+
+    def _run(
+        self,
+        repo_full_name: str,
+        branch_name: str,
+        from_branch: str = "main",
+    ) -> str:
+        g = _get_github()
+        repo = g.get_repo(repo_full_name)
+        source = repo.get_branch(from_branch)
+        repo.create_git_ref(
+            ref=f"refs/heads/{branch_name}",
+            sha=source.commit.sha,
+        )
+        return f"Created branch '{branch_name}' from '{from_branch}'"
+
+
 class GitWriteFileTool(BaseTool):
     name: str = "git_write_file"
     description: str = (
@@ -227,6 +275,44 @@ class GitHubReadPRTool(BaseTool):
         )
 
 
+class GitHubReadPRDiffTool(BaseTool):
+    name: str = "github_read_pr_diff"
+    description: str = (
+        "Read the full code diff (patches) for a pull request. "
+        "Returns the actual code changes for each file."
+    )
+    args_schema: Type[BaseModel] = ReadPRDiffInput
+
+    def _run(self, repo_full_name: str, pr_number: int) -> str:
+        g = _get_github()
+        repo = g.get_repo(repo_full_name)
+        pr = repo.get_pull(pr_number)
+        patches = []
+        for f in pr.get_files():
+            patch = f.patch or "(binary or empty)"
+            patches.append(f"--- {f.filename} ---\n{patch}")
+        return "\n\n".join(patches) if patches else "No file changes found."
+
+
+class GitHubReadFileContentTool(BaseTool):
+    name: str = "github_read_file_content"
+    description: str = (
+        "Read the content of a file from a GitHub repository on a specific branch."
+    )
+    args_schema: Type[BaseModel] = ReadFileContentInput
+
+    def _run(
+        self, repo_full_name: str, file_path: str, branch: str = "main"
+    ) -> str:
+        g = _get_github()
+        repo = g.get_repo(repo_full_name)
+        try:
+            content = repo.get_contents(file_path, ref=branch)
+            return content.decoded_content.decode("utf-8")  # type: ignore[union-attr]
+        except Exception as e:
+            return f"Error reading {file_path}: {e}"
+
+
 class GitHubReviewPRTool(BaseTool):
     name: str = "github_review_pr"
     description: str = (
@@ -245,8 +331,16 @@ class GitHubReviewPRTool(BaseTool):
         g = _get_github()
         repo = g.get_repo(repo_full_name)
         pr = repo.get_pull(pr_number)
-        pr.create_review(body=body, event=event)
-        return f"Submitted '{event}' review on PR #{pr_number}"
+        try:
+            pr.create_review(body=body, event=event)
+            return f"Submitted '{event}' review on PR #{pr_number}"
+        except Exception as e:
+            if "review on your own pull request" in str(e).lower() or "422" in str(e):
+                # Self-review not allowed — post as comment instead
+                comment = f"**Auto-review ({event})**: {body}" if body else f"**Auto-review ({event})**"
+                pr.create_issue_comment(comment)
+                return f"Self-review not allowed by GitHub. Posted review as comment on PR #{pr_number}. Review decision: {event}"
+            raise
 
 
 class GitHubMergePRTool(BaseTool):
@@ -294,3 +388,111 @@ class GitHubCreateReleaseTool(BaseTool):
             f"Created release '{release.title}' ({release.tag_name})\n"
             f"URL: {release.html_url}"
         )
+
+
+class CheckPRCIStatusTool(BaseTool):
+    name: str = "check_pr_ci_status"
+    description: str = (
+        "Check CI status for a specific pull request. "
+        "Polls until checks complete or timeout. Returns overall status "
+        "(all_passed / failed / pending) and per-check details."
+    )
+    args_schema: Type[BaseModel] = CheckPRCIStatusInput
+
+    def _run(
+        self,
+        repo_full_name: str,
+        pr_number: int,
+        wait_seconds: int = 120,
+    ) -> str:
+        import requests as req
+
+        token = os.environ.get("GITHUB_TOKEN", "")
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github+json",
+        }
+        base = f"https://api.github.com/repos/{repo_full_name}"
+
+        # Get PR head SHA
+        g = _get_github()
+        repo = g.get_repo(repo_full_name)
+        pr = repo.get_pull(pr_number)
+        head_sha = pr.head.sha
+
+        wait = min(wait_seconds, 300)
+        waited = 0
+
+        while True:
+            # Use combined status API (works with classic PATs)
+            status_resp = req.get(
+                f"{base}/commits/{head_sha}/status",
+                headers=headers, timeout=15,
+            )
+            status_data = status_resp.json()
+            statuses = status_data.get("statuses", [])
+
+            # Also try check-runs API (may fail with classic PATs)
+            checks = []
+            try:
+                checks_resp = req.get(
+                    f"{base}/commits/{head_sha}/check-runs",
+                    headers=headers, timeout=15,
+                )
+                if checks_resp.status_code == 200:
+                    checks = checks_resp.json().get("check_runs", [])
+            except Exception:
+                pass
+
+            has_any = len(statuses) > 0 or len(checks) > 0
+
+            if not has_any:
+                if waited >= wait:
+                    return (
+                        f"ci_status: pending\n"
+                        f"No CI checks found for PR #{pr_number} (SHA: {head_sha[:8]}) "
+                        f"after waiting {waited}s. CI may not be configured."
+                    )
+                time.sleep(15)
+                waited += 15
+                continue
+
+            # Collect results from both APIs
+            lines = [f"PR #{pr_number} CI status (SHA: {head_sha[:8]}):"]
+            any_failed = False
+            all_complete = True
+
+            for s in statuses:
+                state = s.get("state", "pending")
+                lines.append(f"  - {s.get('context', '?')}: {state}")
+                if state == "pending":
+                    all_complete = False
+                elif state in ("failure", "error"):
+                    any_failed = True
+                    desc = s.get("description", "")
+                    if desc:
+                        lines.append(f"    Description: {desc}")
+
+            for cr in checks:
+                status = cr.get("status", "queued")
+                conclusion = cr.get("conclusion", "")
+                display = conclusion or status
+                lines.append(f"  - {cr.get('name', '?')}: {display}")
+                if status != "completed":
+                    all_complete = False
+                elif conclusion and conclusion not in ("success", "skipped", "neutral"):
+                    any_failed = True
+                    output = cr.get("output", {})
+                    if output and output.get("summary"):
+                        lines.append(f"    Output: {output['summary'][:500]}")
+
+            if all_complete or waited >= wait:
+                if all_complete:
+                    overall = "failed" if any_failed else "all_passed"
+                else:
+                    overall = "pending"
+                lines.insert(1, f"ci_status: {overall}")
+                return "\n".join(lines)
+
+            time.sleep(15)
+            waited += 15

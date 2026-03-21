@@ -16,6 +16,7 @@ class AnalysisCrew:
         return Agent(
             config=self.agents_config["system_analyst"],  # type: ignore[index]
             tools=[GitHubReadIssueTool(), GitHubCreateIssueTool()],
+            max_iter=15,
             verbose=True,
         )
 

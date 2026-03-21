@@ -1,33 +1,117 @@
+analyze_and_plan:
+  description: >
+    Analyze the repository '{repo_full_name}' to determine the app type
+    and optimal deployment strategy.
+
+    1. Use the analyze_repo_structure tool to scan the repo's file tree,
+       detect frameworks, and get a deployment recommendation
+    2. Based on the analysis, decide the deployment platform:
+       - Vercel: for static sites, SPAs, Next.js, Nuxt, or simple frontend apps
+       - Cloud Run: for Python APIs, Go services, or containerized backends
+       - Kubernetes: for complex multi-service apps with docker-compose
+    3. Pay close attention to whether package.json exists — if it does NOT exist,
+       the app is a pure static site and should NOT use npm/node build steps
+    4. Document your analysis and decision
+
+    Return your analysis as JSON:
+    {{"app_type": "...", "platform": "vercel|cloudrun|kubernetes", "has_package_json": true/false, "reason": "..."}}
+  expected_output: >
+    JSON object with app_type, platform, has_package_json, and reason.
+  agent: devops_engineer
+
+setup_cicd:
+  description: >
+    Based on the deployment analysis from the previous task, set up the
+    CI/CD workflow for '{repo_full_name}'.
+
+    IMPORTANT: You MUST use the generate_workflow tool to create the workflow
+    content. Do NOT write workflow YAML yourself. The tool produces tested,
+    production-ready templates with correct secrets syntax.
+
+    Steps:
+    1. Read the previous task output to determine the platform and whether
+       package.json exists
+
+    2. Generate and commit the CI workflow (runs on pull requests):
+       - has_package_json=true → call generate_workflow with platform="ci-node"
+       - has_package_json=false and Python → platform="ci-python"
+       - has_package_json=false and not Python → platform="ci-node" (safe default)
+       Commit with filename "ci.yml"
+
+    3. Generate and commit the deploy workflow (runs on push to main):
+       - has_package_json=true + Vercel → platform="vercel"
+       - has_package_json=false + Vercel → platform="vercel-static"
+       - Cloud Run → platform="cloudrun"
+       - Kubernetes → platform="kubernetes"
+       Commit with filename "deploy.yml"
+
+    Do NOT modify the generated workflow content. Commit each exactly as returned.
+
+    Return result as JSON:
+    {{"ci_workflow": ".github/workflows/ci.yml", "deploy_workflow": ".github/workflows/deploy.yml", "platform": "...", "status": "committed"}}
+  expected_output: >
+    JSON object with ci_workflow, deploy_workflow, platform, and status.
+  agent: devops_engineer
+
+monitor_and_fix:
+  description: >
+    After the CI/CD workflow was committed, check if the GitHub Actions
+    pipeline run succeeded or failed in '{repo_full_name}'.
+
+    1. Use the check_workflow_run tool with wait_seconds=90 to wait for
+       the pipeline to complete and get its status
+    2. If the run succeeded, report success
+    3. If the run failed, read the error logs carefully and diagnose the issue.
+       Use github_read_file_content to read the current workflow and any
+       config files. Then apply the appropriate fix:
+
+    COMMON FIXES (apply these based on the error message):
+
+    a) "No Output Directory named public" or "missing-public-directory":
+       This means Vercel does not know the framework. Fix by creating a
+       vercel.json file in the repo root using git_write_file tool:
+       - For Next.js: {{"framework": "nextjs"}}
+       - For Nuxt: {{"framework": "nuxt"}}
+       - For Vite/React SPA: {{"framework": "vite", "outputDirectory": "dist"}}
+       - For static sites: {{"outputDirectory": "."}}
+
+    b) "npm ci requires package-lock.json" or "EUSAGE":
+       The workflow uses npm ci but there is no lock file. Regenerate
+       the workflow using generate_workflow tool with the correct platform.
+
+    c) "token contents are invalid" or "Must not contain $":
+       The secrets syntax in the workflow YAML is broken. Regenerate
+       the workflow using generate_workflow and commit it again.
+
+    d) Missing secrets (VERCEL_TOKEN, VERCEL_ORG_ID, etc):
+       Report as expected — user needs to configure repo secrets.
+
+    e) Build errors (syntax errors, import errors in the app code):
+       These are app code issues, not CI/CD issues. Report the error
+       but do not try to fix app code.
+
+    After applying a fix, use check_workflow_run again with wait_seconds=90
+    to verify. You may attempt up to 3 fix cycles.
+
+    Return result as JSON:
+    {{"pipeline_status": "success|failed|fixed", "fix_applied": "description or none", "attempts": N}}
+  expected_output: >
+    JSON object with pipeline_status, fix_applied, and attempts.
+  agent: devops_engineer
+
 create_release:
   description: >
     Create a GitHub release for repository '{repo_full_name}'.
 
-    1. Use tag '{release_tag}' (e.g. 'v1.0.0')
+    1. Use tag '{release_tag}'
     2. Set the release title to '{release_name}'
-    3. Include release notes summarizing the changes from the tickets:
+    3. Include release notes summarizing the changes:
        {ticket_summaries}
-    4. Target the 'main' branch
+    4. Include the deployment platform and pipeline status from previous tasks
+    5. Target the 'main' branch
 
     Return the release details as JSON:
-    {"release_tag": "...", "release_url": "https://..."}
+    {{"release_tag": "...", "release_url": "...", "deployment_status": "pipeline_configured", "platform": "..."}}
   expected_output: >
-    JSON object with release_tag and release_url.
-  agent: devops_engineer
-
-deploy:
-  description: >
-    Deploy the release '{release_tag}' to the Kubernetes cluster.
-
-    1. Authenticate with GCP project '{gcp_project_id}' and cluster
-       '{gke_cluster_name}' in region '{gcp_region}'
-    2. Deploy image '{container_image}' to deployment '{deployment_name}'
-       in namespace '{k8s_namespace}'
-
-    Note: This is currently stubbed. The tools will log the deployment
-    details without actually executing.
-
-    Return the deployment status as JSON:
-    {"deployment_status": "stubbed_success", "details": "..."}
-  expected_output: >
-    JSON object with deployment_status and details.
+    JSON object with release_tag, release_url, deployment_status, and platform.
   agent: devops_engineer

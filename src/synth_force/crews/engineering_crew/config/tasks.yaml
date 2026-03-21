@@ -12,44 +12,100 @@ create_ticket:
     - Add the label 'ticket'
 
     Return the created ticket's issue_number, issue_url, and title as JSON:
-    {"issue_number": N, "issue_url": "https://...", "title": "..."}
+    {{"issue_number": N, "issue_url": "https://...", "title": "..."}}
   expected_output: >
     JSON object with the ticket's issue_number, issue_url, and title.
   agent: senior_software_engineer
 
 implement_code:
   description: >
-    Read the implementation ticket #{ticket_issue_number} in repository
-    '{repo_full_name}'.
+    You will receive the output from the previous task containing a ticket's
+    issue_number, issue_url, and title. Extract the ticket issue number from that output.
 
-    Based on the ticket's technical specifications:
-    1. Create a new branch named 'feature/ticket-{ticket_issue_number}'
-    2. Write the required code files using the git_write_file tool
-    3. Open a pull request from the feature branch to main
-    4. Reference the ticket in the PR body with "Closes #{ticket_issue_number}"
+    Then in repository '{repo_full_name}':
+    1. Read the ticket issue to understand what to implement
+    2. Read package.json (or requirements.txt / pyproject.toml) to understand
+       what dependencies and frameworks are installed. ONLY use libraries and
+       frameworks that are already in the project dependencies. Do NOT use
+       Tailwind, Bootstrap, or any other framework that is not installed.
+    3. Create a new branch named 'feature/ticket-<TICKET_NUMBER>' from main using the github_create_branch tool
+    4. Write the required code files to that branch using the git_write_file tool
+    5. Open a pull request from the feature branch to main using github_create_pr
+    6. Reference the ticket in the PR body with "Closes #<TICKET_NUMBER>"
 
-    Return the PR number and URL as JSON:
-    {"pr_number": N, "pr_url": "https://..."}
+    Return the PR number, URL, and ticket issue number as JSON:
+    {{"pr_number": N, "pr_url": "https://...", "ticket_issue_number": N}}
   expected_output: >
-    JSON object with the PR's pr_number and pr_url.
+    JSON object with pr_number, pr_url, and ticket_issue_number.
   agent: software_engineer
 
 review_code:
   description: >
-    Review pull request #{pr_number} in repository '{repo_full_name}'.
+    You will receive the output from the previous task containing a pr_number
+    and pr_url. Extract the PR number from that output.
 
-    Read the PR details and diff. Evaluate:
+    Then review that pull request in repository '{repo_full_name}'.
+
+    STEP 1 - Check CI status:
+    Use the check_pr_ci_status tool with the repo and PR number to wait for
+    CI checks to complete. Record the ci_status (all_passed / failed / pending).
+    If ci_status is "pending" with no check runs found, that means CI is not
+    configured — treat this as acceptable and proceed with code review.
+
+    STEP 2 - Code review:
+    Read the PR details and changed files. Evaluate:
     - Does the code fulfill the ticket requirements?
     - Is the code clean and well-structured?
     - Are there any bugs or issues?
 
-    If the code is good, approve the PR with event 'APPROVE' and merge it.
-    If changes are needed, submit a review with event 'REQUEST_CHANGES'
-    and explain what needs to be fixed.
+    Submit your review using the github_review_pr tool with event 'APPROVE' or 'REQUEST_CHANGES'.
+    If the review tool reports self-review is not allowed, that is OK — treat it as submitted.
 
-    Return the review result as JSON:
-    {"review_status": "approved"} or {"review_status": "changes_requested", "feedback": "..."}
+    IMPORTANT: Do NOT merge the PR. Merging happens in a later step.
+
+    Return the result as JSON including all fields:
+    {{"review_status": "approved", "ci_status": "all_passed", "pr_number": N, "pr_url": "...", "issue_number": N, "issue_url": "...", "title": "..."}}
   expected_output: >
-    JSON object with review_status ('approved' or 'changes_requested')
-    and optional feedback.
+    JSON object with review_status, ci_status, pr_number, pr_url, issue_number, issue_url, and title.
+  agent: senior_software_engineer
+
+fix_ci_failures:
+  description: >
+    You will receive the output from the previous task containing ci_status,
+    pr_number, and other details.
+
+    If ci_status is "all_passed", do nothing — return the same JSON unchanged.
+
+    If ci_status is "failed":
+    1. Extract the pr_number from the previous output. Use check_pr_ci_status
+       to read the failure details for that PR in repository '{repo_full_name}'
+    2. Read the failing files using github_read_file_content on the PR branch
+    3. Fix the code using git_write_file on the same branch
+    4. Wait for CI to re-run by calling check_pr_ci_status again (wait_seconds=120)
+    5. Repeat up to 3 attempts if CI keeps failing
+
+    Return the updated JSON with the latest ci_status:
+    {{"review_status": "...", "ci_status": "all_passed|failed", "pr_number": N, "pr_url": "...", "issue_number": N, "issue_url": "...", "title": "...", "ci_fix_attempts": N}}
+  expected_output: >
+    JSON object with review_status, ci_status, pr_number, pr_url, issue_number, issue_url, title, and ci_fix_attempts.
+  agent: software_engineer
+
+merge_pr:
+  description: >
+    You will receive the output from the previous task containing ci_status,
+    review_status, and pr_number.
+
+    Merge the PR ONLY if BOTH conditions are true:
+    - ci_status is "all_passed" OR "pending" (pending means no CI is configured, which is OK)
+    - review_status is "approved"
+
+    If both conditions are met, extract the pr_number from the previous output
+    and merge that PR in repository '{repo_full_name}' using the github_merge_pr tool.
+
+    If either condition is not met, do NOT merge. Report the reason.
+
+    Return the final result as JSON:
+    {{"review_status": "...", "ci_status": "...", "merged": true/false, "pr_number": N, "pr_url": "...", "issue_number": N, "issue_url": "...", "title": "..."}}
+  expected_output: >
+    JSON object with review_status, ci_status, merged, pr_number, pr_url, issue_number, issue_url, and title.
   agent: senior_software_engineer

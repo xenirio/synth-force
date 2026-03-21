@@ -1,8 +1,10 @@
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 
-from synth_force.tools.browser_mcp_tool import PlaywrightBrowserTool
 from synth_force.tools.github_tools import (
+    GitHubReadFileContentTool,
+    GitHubReadIssueTool,
+    GitHubReadPRDiffTool,
     GitHubReadPRTool,
     GitHubUpdateIssueTool,
 )
@@ -10,7 +12,7 @@ from synth_force.tools.github_tools import (
 
 @CrewBase
 class QACrew:
-    """Crew that tests PRs via browser testing and updates ticket status."""
+    """Crew that reviews PR code against ticket requirements and updates ticket status."""
 
     agents_config = "config/agents.yaml"
     tasks_config = "config/tasks.yaml"
@@ -20,10 +22,13 @@ class QACrew:
         return Agent(
             config=self.agents_config["qa_engineer"],  # type: ignore[index]
             tools=[
+                GitHubReadIssueTool(),
                 GitHubReadPRTool(),
+                GitHubReadPRDiffTool(),
+                GitHubReadFileContentTool(),
                 GitHubUpdateIssueTool(),
-                PlaywrightBrowserTool(),
             ],
+            max_iter=10,
             verbose=True,
         )
 

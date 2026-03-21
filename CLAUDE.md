@@ -54,7 +54,7 @@ All GitHub tools (`tools/github_tools.py`) use PyGithub with `GITHUB_TOKEN` from
 - **Playwright MCP**: `PlaywrightBrowserTool` returns placeholder text; needs real MCP server integration.
 - **K8s deploy**: `KubernetesDeployTool` and `GCloudAuthTool` are stubs.
 - **No `@persist`** on the Flow yet (crash recovery).
-- **No guardrails, `max_iter`, or `max_execution_time`** on agents yet.
+- **No `max_execution_time`** on agents yet (`max_iter` is now set).
 
 ## Environment Variables
 

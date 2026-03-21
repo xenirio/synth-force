@@ -2,9 +2,12 @@ from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 
 from synth_force.tools.github_tools import (
+    CheckPRCIStatusTool,
+    GitHubCreateBranchTool,
     GitHubCreateIssueTool,
     GitHubCreatePRTool,
     GitHubMergePRTool,
+    GitHubReadFileContentTool,
     GitHubReadIssueTool,
     GitHubReadPRTool,
     GitHubReviewPRTool,
@@ -29,7 +32,9 @@ class EngineeringCrew:
                 GitHubReadPRTool(),
                 GitHubReviewPRTool(),
                 GitHubMergePRTool(),
+                CheckPRCIStatusTool(),
             ],
+            max_iter=15,
             verbose=True,
         )
 
@@ -39,9 +44,13 @@ class EngineeringCrew:
             config=self.agents_config["software_engineer"],  # type: ignore[index]
             tools=[
                 GitHubReadIssueTool(),
+                GitHubCreateBranchTool(),
                 GitWriteFileTool(),
                 GitHubCreatePRTool(),
+                GitHubReadFileContentTool(),
+                CheckPRCIStatusTool(),
             ],
+            max_iter=15,
             verbose=True,
         )
 
@@ -61,6 +70,18 @@ class EngineeringCrew:
     def review_code(self) -> Task:
         return Task(
             config=self.tasks_config["review_code"],  # type: ignore[index]
+        )
+
+    @task
+    def fix_ci_failures(self) -> Task:
+        return Task(
+            config=self.tasks_config["fix_ci_failures"],  # type: ignore[index]
+        )
+
+    @task
+    def merge_pr(self) -> Task:
+        return Task(
+            config=self.tasks_config["merge_pr"],  # type: ignore[index]
         )
 
     @crew

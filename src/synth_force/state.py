@@ -14,6 +14,7 @@ class Ticket(BaseModel):
     pr_url: str = ""
     pr_number: int = 0
     review_status: str = ""  # approved | changes_requested
+    ci_status: str = ""  # all_passed | failed | pending
     qa_status: str = ""  # passed | failed
 
 

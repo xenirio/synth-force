@@ -2,14 +2,18 @@ test_pr:
   description: >
     Test pull request #{pr_number} in repository '{repo_full_name}'.
 
-    1. Read the PR details to understand what was implemented
-    2. Use the Playwright browser tool to test the deployed changes at
-       the provided test URL: {test_url}
-    3. Verify each acceptance criterion from the original ticket
-    4. Document test results with pass/fail for each criterion
+    1. Read the linked ticket #{ticket_issue_number} to get the acceptance criteria
+    2. Read the PR details and the full code diff using github_read_pr_diff
+    3. For each changed file, read the final file content on main using github_read_file_content
+    4. Verify the code against each acceptance criterion:
+       - Does the implementation match what was specified?
+       - Are all required files/components created?
+       - Is the code syntactically correct and well-structured?
+       - Are there any obvious bugs, missing imports, or broken references?
+    5. Document test results with pass/fail for each criterion
 
     Return test results as JSON:
-    {"qa_status": "passed"} or {"qa_status": "failed", "failures": ["..."]}
+    {{"qa_status": "passed"}} or {{"qa_status": "failed", "failures": ["..."]}}
   expected_output: >
     JSON object with qa_status ('passed' or 'failed') and optional
     list of failures.
@@ -17,21 +21,21 @@ test_pr:
 
 update_ticket_status:
   description: >
-    Update ticket #{ticket_issue_number} in repository '{repo_full_name}'
-    with the QA test results.
+    You will receive the QA test results from the previous task.
+    Extract the qa_status and update ticket #{ticket_issue_number}
+    in repository '{repo_full_name}'.
 
     If QA passed:
     - Add label 'qa-passed'
-    - Add a comment summarizing the test results
+    - Add a comment summarizing what was verified
     - Close the issue
 
     If QA failed:
     - Add label 'qa-failed'
-    - Add a comment detailing which tests failed and why
+    - Add a comment detailing which acceptance criteria failed and why
 
     Return the updated status as JSON:
-    {"ticket_issue_number": N, "qa_status": "{qa_status}"}
+    {{"ticket_issue_number": {ticket_issue_number}, "qa_status": "passed_or_failed"}}
   expected_output: >
-    JSON object confirming the ticket update with ticket_issue_number
-    and qa_status.
+    JSON object with ticket_issue_number and qa_status.
   agent: qa_engineer
