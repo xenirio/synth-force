@@ -1,6 +1,7 @@
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 
+from synth_force.model_config import get_model
 from synth_force.tools.github_tools import (
     GitHubReadFileContentTool,
     GitHubReadIssueTool,
@@ -28,6 +29,7 @@ class QACrew:
                 GitHubReadFileContentTool(),
                 GitHubUpdateIssueTool(),
             ],
+            llm=get_model("QA"),
             max_iter=10,
             verbose=True,
         )

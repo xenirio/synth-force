@@ -1,6 +1,7 @@
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 
+from synth_force.model_config import get_model
 from synth_force.tools.github_tools import (
     CheckPRCIStatusTool,
     GitHubCreateBranchTool,
@@ -34,7 +35,8 @@ class EngineeringCrew:
                 GitHubMergePRTool(),
                 CheckPRCIStatusTool(),
             ],
-            max_iter=15,
+            llm=get_model("SENIOR_SE"),
+            max_iter=25,
             verbose=True,
         )
 
@@ -50,7 +52,8 @@ class EngineeringCrew:
                 GitHubReadFileContentTool(),
                 CheckPRCIStatusTool(),
             ],
-            max_iter=15,
+            llm=get_model("SE"),
+            max_iter=25,
             verbose=True,
         )
 
@@ -66,7 +69,8 @@ class EngineeringCrew:
                 GitHubReadFileContentTool(),
                 CheckPRCIStatusTool(),
             ],
-            max_iter=15,
+            llm=get_model("SE2"),
+            max_iter=25,
             verbose=True,
         )
 

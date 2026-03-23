@@ -571,20 +571,31 @@ class CheckWorkflowRunTool(BaseTool):
                         )
                         if log_resp.status_code == 200 and log_resp.text:
                             log_text = log_resp.text
+                            # Find the failed step's logs by looking for
+                            # the step name and collecting lines until next step
+                            failed_steps = [
+                                s["name"] for s in job.get("steps", [])
+                                if s.get("conclusion") == "failure"
+                            ]
                             # Find error lines
                             error_lines = [
                                 line for line in log_text.split("\n")
                                 if any(kw in line.lower() for kw in
-                                       ["error", "failed", "fatal", "not found",
-                                        "eusage", "enoent", "exit code"])
+                                       ["error", "err!", "failed", "fatal",
+                                        "not found", "eusage", "enoent",
+                                        "exit code", "cannot find",
+                                        "module not found", "syntaxerror",
+                                        "typeerror", "referenceerror",
+                                        "command not found", "permission denied",
+                                        "no such file", "missing"])
                             ]
                             if error_lines:
                                 result += "\nError lines from logs:\n"
-                                result += "\n".join(error_lines[:30]) + "\n"
-                            else:
-                                # Just show last 1500 chars
-                                tail = log_text[-1500:] if len(log_text) > 1500 else log_text
-                                result += f"\nLog tail:\n{tail}\n"
+                                result += "\n".join(error_lines[:50]) + "\n"
+
+                            # Always include last 3000 chars for context
+                            tail = log_text[-3000:] if len(log_text) > 3000 else log_text
+                            result += f"\nLog tail:\n{tail}\n"
                     except Exception:
                         result += "\n(Could not fetch job logs)\n"
 

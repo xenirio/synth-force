@@ -86,9 +86,15 @@ monitor_and_fix:
     d) Missing secrets (VERCEL_TOKEN, VERCEL_ORG_ID, etc):
        Report as expected — user needs to configure repo secrets.
 
-    e) Build errors (syntax errors, import errors in the app code):
+    e) Missing dependencies ("Cannot find module", "@types/react", "@types/node",
+       "Module not found"):
+       Read the current package.json using github_read_file_content. Add the
+       missing packages to devDependencies (for @types/*) or dependencies.
+       Write the updated package.json using git_write_file on the main branch.
+
+    f) Build errors caused by app logic (syntax errors, wrong variable names):
        These are app code issues, not CI/CD issues. Report the error
-       but do not try to fix app code.
+       but do not try to fix app logic.
 
     After applying a fix, use check_workflow_run again with wait_seconds=90
     to verify. You may attempt up to 3 fix cycles.
@@ -97,6 +103,33 @@ monitor_and_fix:
     {{"pipeline_status": "success|failed|fixed", "fix_applied": "description or none", "attempts": N}}
   expected_output: >
     JSON object with pipeline_status, fix_applied, and attempts.
+  agent: devops_engineer
+
+audit_pr_pipelines:
+  description: >
+    Audit all open pull requests in '{repo_full_name}' to check if any
+    have failing CI pipelines.
+
+    1. Use the check_pr_ci_status tool to check CI status for each open PR.
+       Look at PR numbers from the ticket summaries: {ticket_summaries}.
+    2. For each PR with failed CI:
+       - Read the failure details from check_pr_ci_status
+       - Read the failing files using github_read_file_content on the PR's
+         branch (the branch name is usually feature/ticket-<NUMBER>)
+       - Fix the code using git_write_file on the PR's branch (NOT main)
+       - Wait for CI to re-run by calling check_pr_ci_status again
+         with wait_seconds=120
+       - Repeat up to 3 fix attempts per PR
+    3. If all PRs have passing CI or no check runs, report success
+
+    IMPORTANT: Only fix CI/CD configuration issues and build errors.
+    Do NOT refactor or change application logic. Write fixes to the
+    PR branch, not to main.
+
+    Return result as JSON:
+    {{"audited_prs": N, "failed_prs": N, "fixed_prs": N, "details": "..."}}
+  expected_output: >
+    JSON object with audited_prs, failed_prs, fixed_prs, and details.
   agent: devops_engineer
 
 create_release:

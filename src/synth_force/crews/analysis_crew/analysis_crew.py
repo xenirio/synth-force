@@ -1,6 +1,7 @@
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 
+from synth_force.model_config import get_model
 from synth_force.tools.github_tools import GitHubCreateIssueTool, GitHubReadIssueTool
 
 
@@ -16,6 +17,7 @@ class AnalysisCrew:
         return Agent(
             config=self.agents_config["system_analyst"],  # type: ignore[index]
             tools=[GitHubReadIssueTool(), GitHubCreateIssueTool()],
+            llm=get_model("ANALYST"),
             max_iter=15,
             verbose=True,
         )

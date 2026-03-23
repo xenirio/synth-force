@@ -112,6 +112,8 @@ class SynthForceFlow(Flow[SynthForceState]):
         repo_full_name = f"{self.state.repo_owner}/{self.state.repo_name}"
 
         def _process_task(task):
+            from synth_force.tools.github_tools import GitHubUpdateIssueTool
+
             print(f"[ENGINEERING] Working on task #{task.issue_number}")
             ticket_result = (
                 EngineeringCrew()
@@ -124,7 +126,7 @@ class SynthForceFlow(Flow[SynthForceState]):
                 )
             )
             ticket_data = _parse_json(ticket_result.raw)
-            return Ticket(
+            ticket = Ticket(
                 issue_number=ticket_data.get("issue_number", 0),
                 issue_url=ticket_data.get("issue_url", ""),
                 title=ticket_data.get("title", ""),
@@ -133,6 +135,21 @@ class SynthForceFlow(Flow[SynthForceState]):
                 review_status=ticket_data.get("review_status", ""),
                 ci_status=ticket_data.get("ci_status", ""),
             )
+
+            # Close the task issue after engineering completes
+            if ticket.pr_number and ticket_data.get("merged", True):
+                try:
+                    GitHubUpdateIssueTool()._run(
+                        repo_full_name=repo_full_name,
+                        issue_number=task.issue_number,
+                        comment=f"Completed. PR #{ticket.pr_number} merged.",
+                        state="closed",
+                    )
+                    print(f"[ENGINEERING] Closed task #{task.issue_number}")
+                except Exception as e:
+                    print(f"[ENGINEERING] Failed to close task #{task.issue_number}: {e}")
+
+            return ticket
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = {
@@ -300,10 +317,24 @@ class SynthForceFlow(Flow[SynthForceState]):
         print(f"[DEVOPS] Platform: {result_data.get('platform', '?')}")
         print(f"[DEVOPS] Status: {self.state.deployment_status}")
 
-        # Close the epic issue
-        epic_number = int(self.state.epic_url.rstrip("/").split("/")[-1])
+        # Close all task issues and the epic issue
         from synth_force.tools.github_tools import GitHubUpdateIssueTool
-        GitHubUpdateIssueTool()._run(
+        update_tool = GitHubUpdateIssueTool()
+
+        for task in self.state.tasks:
+            try:
+                update_tool._run(
+                    repo_full_name=repo_full_name,
+                    issue_number=task.issue_number,
+                    comment=f"All engineering complete. Released as {release_tag}.",
+                    state="closed",
+                )
+                print(f"[DEVOPS] Closed task #{task.issue_number}")
+            except Exception:
+                pass  # May already be closed
+
+        epic_number = int(self.state.epic_url.rstrip("/").split("/")[-1])
+        update_tool._run(
             repo_full_name=repo_full_name,
             issue_number=epic_number,
             comment=f"All tasks completed. Released as {release_tag}.",

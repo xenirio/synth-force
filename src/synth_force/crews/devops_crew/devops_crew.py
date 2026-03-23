@@ -1,7 +1,9 @@
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 
+from synth_force.model_config import get_model
 from synth_force.tools.github_tools import (
+    CheckPRCIStatusTool,
     GitHubCreateReleaseTool,
     GitHubReadFileContentTool,
     GitWriteFileTool,
@@ -30,10 +32,12 @@ class DevOpsCrew:
                 GenerateWorkflowTool(),
                 CommitWorkflowTool(),
                 CheckWorkflowRunTool(),
+                CheckPRCIStatusTool(),
                 GitHubCreateReleaseTool(),
                 GitHubReadFileContentTool(),
                 GitWriteFileTool(),
             ],
+            llm=get_model("DEVOPS"),
             max_iter=15,
             verbose=True,
         )
@@ -54,6 +58,12 @@ class DevOpsCrew:
     def monitor_and_fix(self) -> Task:
         return Task(
             config=self.tasks_config["monitor_and_fix"],  # type: ignore[index]
+        )
+
+    @task
+    def audit_pr_pipelines(self) -> Task:
+        return Task(
+            config=self.tasks_config["audit_pr_pipelines"],  # type: ignore[index]
         )
 
     @task
