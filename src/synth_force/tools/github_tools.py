@@ -99,6 +99,12 @@ class CheckPRCIStatusInput(BaseModel):
     )
 
 
+class ListIssuesInput(BaseModel):
+    repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
+    state: str = Field("open", description="Filter by state: 'open', 'closed', or 'all'")
+    labels: list[str] = Field(default_factory=list, description="Filter by label names")
+
+
 class CreateReleaseInput(BaseModel):
     repo_full_name: str = Field(..., description="Repository as 'owner/repo'")
     tag_name: str = Field(..., description="Tag for the release (e.g. 'v1.0.0')")
@@ -127,6 +133,34 @@ class GitHubReadIssueTool(BaseTool):
             f"URL: {issue.html_url}\n\n"
             f"{issue.body or '(no body)'}"
         )
+
+
+class GitHubListIssuesTool(BaseTool):
+    name: str = "github_list_issues"
+    description: str = (
+        "List GitHub issues in a repository. Use this to check for existing "
+        "issues before creating new ones to avoid duplicates."
+    )
+    args_schema: Type[BaseModel] = ListIssuesInput
+
+    def _run(self, repo_full_name: str, state: str = "open", labels: list[str] | None = None) -> str:
+        g = _get_github()
+        repo = g.get_repo(repo_full_name)
+        kwargs = {"state": state}
+        if labels:
+            kwargs["labels"] = [repo.get_label(l) for l in labels]
+        issues = repo.get_issues(**kwargs)
+        results = []
+        for issue in issues[:30]:
+            if issue.pull_request:
+                continue
+            issue_labels = ", ".join(l.name for l in issue.labels)
+            results.append(
+                f"#{issue.number}: {issue.title} [{issue.state}] labels=[{issue_labels}]"
+            )
+        if not results:
+            return "No issues found."
+        return "\n".join(results)
 
 
 class GitHubCreateIssueTool(BaseTool):
@@ -192,6 +226,12 @@ class GitHubCreateBranchTool(BaseTool):
     ) -> str:
         g = _get_github()
         repo = g.get_repo(repo_full_name)
+        # Check if branch already exists
+        try:
+            repo.get_branch(branch_name)
+            return f"Branch '{branch_name}' already exists — reusing it."
+        except Exception:
+            pass
         source = repo.get_branch(from_branch)
         repo.create_git_ref(
             ref=f"refs/heads/{branch_name}",
@@ -235,7 +275,10 @@ class GitWriteFileTool(BaseTool):
 
 class GitHubCreatePRTool(BaseTool):
     name: str = "github_create_pr"
-    description: str = "Create a pull request from a head branch to a base branch."
+    description: str = (
+        "Create a pull request from a head branch to a base branch. "
+        "If a PR already exists for the same head branch, returns the existing PR details."
+    )
     args_schema: Type[BaseModel] = CreatePRInput
 
     def _run(
@@ -248,6 +291,13 @@ class GitHubCreatePRTool(BaseTool):
     ) -> str:
         g = _get_github()
         repo = g.get_repo(repo_full_name)
+        # Check for existing open PR from this head branch
+        existing_prs = repo.get_pulls(state="open", head=f"{repo.owner.login}:{head}", base=base)
+        for pr in existing_prs:
+            return (
+                f"PR already exists — PR #{pr.number}: {pr.title}\n"
+                f"URL: {pr.html_url}"
+            )
         pr = repo.create_pull(title=title, body=body, head=head, base=base)
         return f"Created PR #{pr.number}: {pr.title}\nURL: {pr.html_url}"
 
@@ -414,23 +464,29 @@ class CheckPRCIStatusTool(BaseTool):
         }
         base = f"https://api.github.com/repos/{repo_full_name}"
 
-        # Get PR head SHA
+        # Get PR head branch
         g = _get_github()
         repo = g.get_repo(repo_full_name)
         pr = repo.get_pull(pr_number)
         head_sha = pr.head.sha
+        head_branch = pr.head.ref
 
         wait = min(wait_seconds, 300)
         waited = 0
 
         while True:
-            # Use combined status API (works with classic PATs)
-            status_resp = req.get(
-                f"{base}/commits/{head_sha}/status",
-                headers=headers, timeout=15,
-            )
-            status_data = status_resp.json()
-            statuses = status_data.get("statuses", [])
+            # Try Actions workflow runs API (works with classic PATs)
+            runs = []
+            try:
+                runs_resp = req.get(
+                    f"{base}/actions/runs",
+                    params={"branch": head_branch, "per_page": 5},
+                    headers=headers, timeout=15,
+                )
+                if runs_resp.status_code == 200:
+                    runs = runs_resp.json().get("workflow_runs", [])
+            except Exception:
+                pass
 
             # Also try check-runs API (may fail with classic PATs)
             checks = []
@@ -444,7 +500,19 @@ class CheckPRCIStatusTool(BaseTool):
             except Exception:
                 pass
 
-            has_any = len(statuses) > 0 or len(checks) > 0
+            # Also try combined status API
+            statuses = []
+            try:
+                status_resp = req.get(
+                    f"{base}/commits/{head_sha}/status",
+                    headers=headers, timeout=15,
+                )
+                if status_resp.status_code == 200:
+                    statuses = status_resp.json().get("statuses", [])
+            except Exception:
+                pass
+
+            has_any = len(runs) > 0 or len(checks) > 0 or len(statuses) > 0
 
             if not has_any:
                 if waited >= wait:
@@ -457,11 +525,72 @@ class CheckPRCIStatusTool(BaseTool):
                 waited += 15
                 continue
 
-            # Collect results from both APIs
+            # Collect results
             lines = [f"PR #{pr_number} CI status (SHA: {head_sha[:8]}):"]
             any_failed = False
             all_complete = True
 
+            # Process Actions workflow runs (only the most recent per workflow)
+            seen_workflows = set()
+            for run in runs:
+                wf_name = run.get("name", "?")
+                if wf_name in seen_workflows:
+                    continue
+                seen_workflows.add(wf_name)
+
+                status = run.get("status", "queued")
+                conclusion = run.get("conclusion", "")
+                display = conclusion or status
+                lines.append(f"  - {wf_name}: {display}")
+                if status != "completed":
+                    all_complete = False
+                elif conclusion and conclusion not in ("success", "skipped", "neutral"):
+                    any_failed = True
+                    run_id = run.get("id")
+                    if run_id:
+                        try:
+                            jobs_resp = req.get(
+                                f"{base}/actions/runs/{run_id}/jobs",
+                                headers=headers, timeout=15,
+                            )
+                            if jobs_resp.status_code == 200:
+                                for job in jobs_resp.json().get("jobs", []):
+                                    if job.get("conclusion") == "failure":
+                                        failed_steps = [
+                                            s["name"] for s in job.get("steps", [])
+                                            if s.get("conclusion") == "failure"
+                                        ]
+                                        if failed_steps:
+                                            lines.append(f"    Failed steps: {', '.join(failed_steps)}")
+                                        job_id = job.get("id")
+                                        try:
+                                            log_resp = req.get(
+                                                f"{base}/actions/jobs/{job_id}/logs",
+                                                headers=headers, timeout=15,
+                                            )
+                                            if log_resp.status_code == 200:
+                                                log_lines = log_resp.text.strip().split("\n")
+                                                # Filter out noise: git cleanup, post-job, warnings
+                                                error_lines = [
+                                                    l for l in log_lines
+                                                    if any(kw in l.lower() for kw in [
+                                                        "error", "failed", "cannot find", "not found",
+                                                        "module not found", "syntax error",
+                                                        "can't resolve", "unable to", "exit code",
+                                                    ])
+                                                ]
+                                                if error_lines:
+                                                    lines.append("    Errors:")
+                                                    for el in error_lines[:10]:
+                                                        # Strip timestamp prefix
+                                                        clean = el.split("Z ", 1)[-1] if "Z " in el else el
+                                                        lines.append(f"      {clean.strip()}")
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+
+            # Process commit statuses
             for s in statuses:
                 state = s.get("state", "pending")
                 lines.append(f"  - {s.get('context', '?')}: {state}")
@@ -473,6 +602,7 @@ class CheckPRCIStatusTool(BaseTool):
                     if desc:
                         lines.append(f"    Description: {desc}")
 
+            # Process check runs
             for cr in checks:
                 status = cr.get("status", "queued")
                 conclusion = cr.get("conclusion", "")

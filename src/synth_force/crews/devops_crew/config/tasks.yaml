@@ -1,44 +1,50 @@
 analyze_and_plan:
   description: >
-    Analyze the repository '{repo_full_name}' to determine the app type
-    and optimal deployment strategy.
+    Analyze the repository '{repo_full_name}' to determine what DevOps work
+    is actually needed. You must check existing state before taking action.
 
-    1. Use the analyze_repo_structure tool to scan the repo's file tree,
-       detect frameworks, and get a deployment recommendation
-    2. Based on the analysis, decide the deployment platform:
-       - Vercel: for static sites, SPAs, Next.js, Nuxt, or simple frontend apps
-       - Cloud Run: for Python APIs, Go services, or containerized backends
-       - Kubernetes: for complex multi-service apps with docker-compose
-    3. Pay close attention to whether package.json exists — if it does NOT exist,
-       the app is a pure static site and should NOT use npm/node build steps
-    4. Document your analysis and decision
+    1. Use github_read_file_content to check if .github/workflows/ci.yml
+       already exists on main
+    2. Use github_read_file_content to check if .github/workflows/deploy.yml
+       already exists on main
+    3. Use the analyze_repo_structure tool to scan the repo's tech stack
+
+    Based on what you find, decide what needs to be done:
+    - If BOTH ci.yml and deploy.yml exist → set needs_ci=false, needs_deploy=false
+    - If only ci.yml exists → set needs_ci=false, needs_deploy=true
+    - If neither exists → set needs_ci=true, needs_deploy=true
+
+    Also determine the deployment platform:
+    - Vercel: for static sites, SPAs, Next.js, Nuxt, or simple frontend apps
+    - Cloud Run: for Python APIs, Go services, or containerized backends
+    - Kubernetes: for complex multi-service apps with docker-compose
 
     Return your analysis as JSON:
-    {{"app_type": "...", "platform": "vercel|cloudrun|kubernetes", "has_package_json": true/false, "reason": "..."}}
+    {{"app_type": "...", "platform": "vercel|cloudrun|kubernetes", "has_package_json": true/false, "needs_ci": true/false, "needs_deploy": true/false, "reason": "..."}}
   expected_output: >
-    JSON object with app_type, platform, has_package_json, and reason.
+    JSON object with app_type, platform, has_package_json, needs_ci, needs_deploy, and reason.
   agent: devops_engineer
 
 setup_cicd:
   description: >
-    Based on the deployment analysis from the previous task, set up the
-    CI/CD workflow for '{repo_full_name}'.
+    Based on the analysis from the previous task, set up any MISSING CI/CD
+    workflows for '{repo_full_name}'.
 
-    IMPORTANT: You MUST use the generate_workflow tool to create the workflow
-    content. Do NOT write workflow YAML yourself. The tool produces tested,
-    production-ready templates with correct secrets syntax.
+    Read the previous task output. If needs_ci is false AND needs_deploy is
+    false, there is nothing to do — return immediately with status "already_configured".
 
-    Steps:
-    1. Read the previous task output to determine the platform and whether
-       package.json exists
+    IMPORTANT: You MUST use the generate_workflow tool to create workflow
+    content. Do NOT write workflow YAML yourself.
 
-    2. Generate and commit the CI workflow (runs on pull requests):
-       - has_package_json=true → call generate_workflow with platform="ci-node"
+    Steps (only for what is needed):
+
+    1. If needs_ci is true, generate and commit the CI workflow:
+       - has_package_json=true → generate_workflow with platform="ci-node"
        - has_package_json=false and Python → platform="ci-python"
-       - has_package_json=false and not Python → platform="ci-node" (safe default)
+       - has_package_json=false and not Python → platform="ci-node"
        Commit with filename "ci.yml"
 
-    3. Generate and commit the deploy workflow (runs on push to main):
+    2. If needs_deploy is true, generate and commit the deploy workflow:
        - has_package_json=true + Vercel → platform="vercel"
        - has_package_json=false + Vercel → platform="vercel-static"
        - Cloud Run → platform="cloudrun"
@@ -48,7 +54,7 @@ setup_cicd:
     Do NOT modify the generated workflow content. Commit each exactly as returned.
 
     Return result as JSON:
-    {{"ci_workflow": ".github/workflows/ci.yml", "deploy_workflow": ".github/workflows/deploy.yml", "platform": "...", "status": "committed"}}
+    {{"ci_workflow": "existing|committed|skipped", "deploy_workflow": "existing|committed|skipped", "platform": "...", "status": "already_configured|committed"}}
   expected_output: >
     JSON object with ci_workflow, deploy_workflow, platform, and status.
   agent: devops_engineer

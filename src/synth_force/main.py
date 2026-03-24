@@ -2,6 +2,7 @@
 import json
 import re
 import sys
+import time
 import warnings
 
 from crewai.flow.flow import Flow, listen, or_, router, start
@@ -40,21 +41,46 @@ def _parse_json(raw: str):
     raise ValueError(f"Could not parse JSON from LLM output: {raw[:500]}")
 
 
+def _kickoff_with_retry(crew_instance, inputs, max_retries=None, base_delay=30):
+    """Kick off a crew with retry on model availability errors.
+
+    Retries indefinitely by default, with exponential backoff capped at 5 minutes.
+    """
+    attempt = 0
+    while True:
+        try:
+            return crew_instance.crew().kickoff(inputs=inputs)
+        except Exception as e:
+            err_msg = str(e).lower()
+            retryable = any(kw in err_msg for kw in [
+                "resource_exhausted", "rate limit", "429", "503", "500",
+                "overloaded", "quota", "capacity", "unavailable",
+                "too many requests", "server error", "timeout",
+                "connection", "retry", "resource has been exhausted",
+                "none or empty", "invalid response from llm",
+            ])
+            if not retryable:
+                raise
+            attempt += 1
+            if max_retries is not None and attempt > max_retries:
+                raise
+            delay = min(base_delay * (2 ** (attempt - 1)), 300)
+            print(f"[RETRY] Model unavailable (attempt {attempt}), retrying in {delay}s... ({e})")
+            time.sleep(delay)
+
+
 class SynthForceFlow(Flow[SynthForceState]):
     """Multi-agent software development pipeline orchestrated as a CrewAI Flow."""
 
     @start()
     def analyze_epic(self):
         """Phase 1: System Analyst reads the epic and creates task issues."""
-        result = (
-            AnalysisCrew()
-            .crew()
-            .kickoff(
-                inputs={
-                    "repo_full_name": f"{self.state.repo_owner}/{self.state.repo_name}",
-                    "epic_issue_number": self.state.epic_url.split("/")[-1],
-                }
-            )
+        result = _kickoff_with_retry(
+            AnalysisCrew(),
+            inputs={
+                "repo_full_name": f"{self.state.repo_owner}/{self.state.repo_name}",
+                "epic_issue_number": self.state.epic_url.split("/")[-1],
+            },
         )
         raw_tasks = _parse_json(result.raw)
         if isinstance(raw_tasks, dict):
@@ -67,38 +93,50 @@ class SynthForceFlow(Flow[SynthForceState]):
 
     @listen(analyze_epic)
     def setup_ci(self):
-        """Ensure CI workflow exists on main before PRs are created."""
+        """Ensure CI workflow and lint config exist on main before PRs are created."""
+        from synth_force.tools.github_tools import GitHubReadFileContentTool, GitWriteFileTool
+
         repo_full_name = f"{self.state.repo_owner}/{self.state.repo_name}"
-        print(f"[CI SETUP] Detecting app type for {repo_full_name}")
 
-        # Detect app type
-        analysis = AnalyzeRepoStructureTool()._run(repo_full_name)
-        has_package_json = "package.json" in analysis and "Detected config files:" in analysis
-        has_python = any(
-            kw in analysis
-            for kw in ["requirements.txt", "pyproject.toml", "PYTHON_APP"]
+        # Skip if CI workflow already exists
+        existing_ci = GitHubReadFileContentTool()._run(
+            repo_full_name, ".github/workflows/ci.yml", "main"
         )
-
-        # Choose CI template
-        if has_package_json:
-            ci_platform = "ci-node"
-        elif has_python:
-            ci_platform = "ci-python"
+        if not existing_ci.startswith("Error"):
+            print("[CI SETUP] ci.yml already exists on main — skipped")
         else:
-            ci_platform = "ci-node"  # safe default
+            print(f"[CI SETUP] Detecting app type for {repo_full_name}")
+            analysis = AnalyzeRepoStructureTool()._run(repo_full_name)
+            has_package_json = "package.json" in analysis and "Detected config files:" in analysis
+            has_python = any(
+                kw in analysis
+                for kw in ["requirements.txt", "pyproject.toml", "PYTHON_APP"]
+            )
 
-        print(f"[CI SETUP] Using {ci_platform} template")
+            ci_platform = "ci-node" if has_package_json else ("ci-python" if has_python else "ci-node")
+            print(f"[CI SETUP] Using {ci_platform} template")
 
-        # Generate and commit CI workflow to main
-        ci_content = GenerateWorkflowTool()._run(ci_platform)
-        result = CommitWorkflowTool()._run(
-            repo_full_name=repo_full_name,
-            workflow_filename="ci.yml",
-            workflow_content=ci_content,
-            branch="main",
-            commit_message="ci: add CI workflow for pull requests",
-        )
-        print(f"[CI SETUP] {result}")
+            ci_content = GenerateWorkflowTool()._run(ci_platform)
+            result = CommitWorkflowTool()._run(
+                repo_full_name=repo_full_name,
+                workflow_filename="ci.yml",
+                workflow_content=ci_content,
+                branch="main",
+                commit_message="ci: add CI workflow for pull requests",
+            )
+            print(f"[CI SETUP] {result}")
+
+        # For Node.js projects, ensure .eslintrc.json exists so `next lint` doesn't prompt
+        existing_eslint = GitHubReadFileContentTool()._run(repo_full_name, ".eslintrc.json", "main")
+        if existing_eslint.startswith("Error"):
+            GitWriteFileTool()._run(
+                repo_full_name=repo_full_name,
+                file_path=".eslintrc.json",
+                content='{\n  "extends": "next/core-web-vitals"\n}\n',
+                branch="main",
+                commit_message="ci: add .eslintrc.json for non-interactive linting",
+            )
+            print("[CI SETUP] Created .eslintrc.json on main")
 
     @listen(setup_ci)
     def engineer_tasks(self):
@@ -115,15 +153,12 @@ class SynthForceFlow(Flow[SynthForceState]):
             from synth_force.tools.github_tools import GitHubUpdateIssueTool
 
             print(f"[ENGINEERING] Working on task #{task.issue_number}")
-            ticket_result = (
-                EngineeringCrew()
-                .crew()
-                .kickoff(
-                    inputs={
-                        "repo_full_name": repo_full_name,
-                        "task_issue_number": task.issue_number,
-                    }
-                )
+            ticket_result = _kickoff_with_retry(
+                EngineeringCrew(),
+                inputs={
+                    "repo_full_name": repo_full_name,
+                    "task_issue_number": task.issue_number,
+                },
             )
             ticket_data = _parse_json(ticket_result.raw)
             ticket = Ticket(
@@ -205,16 +240,13 @@ class SynthForceFlow(Flow[SynthForceState]):
             if not ticket.pr_number:
                 continue
             print(f"[QA] Testing PR #{ticket.pr_number} for ticket #{ticket.issue_number}")
-            qa_result = (
-                QACrew()
-                .crew()
-                .kickoff(
-                    inputs={
-                        "repo_full_name": repo_full_name,
-                        "pr_number": ticket.pr_number,
-                        "ticket_issue_number": ticket.issue_number,
-                    }
-                )
+            qa_result = _kickoff_with_retry(
+                QACrew(),
+                inputs={
+                    "repo_full_name": repo_full_name,
+                    "pr_number": ticket.pr_number,
+                    "ticket_issue_number": ticket.issue_number,
+                },
             )
             result_data = _parse_json(qa_result.raw)
             ticket.qa_status = result_data.get("qa_status", "unknown")
@@ -247,13 +279,12 @@ class SynthForceFlow(Flow[SynthForceState]):
 
             for attempt in range(1, max_rework + 1):
                 print(f"[REWORK {attempt}/{max_rework}] Ticket #{ticket.issue_number}: {ticket.title}")
-                rework_result = (
-                    EngineeringCrew()
-                    .crew()
-                    .kickoff(inputs={
+                rework_result = _kickoff_with_retry(
+                    EngineeringCrew(),
+                    inputs={
                         "repo_full_name": repo_full_name,
                         "task_issue_number": ticket.issue_number,
-                    })
+                    },
                 )
                 rework_data = _parse_json(rework_result.raw)
                 new_pr = rework_data.get("pr_number", 0)
@@ -265,14 +296,13 @@ class SynthForceFlow(Flow[SynthForceState]):
                 ticket.pr_url = rework_data.get("pr_url", "")
                 print(f"  → New PR #{new_pr}, running QA...")
 
-                qa_result = (
-                    QACrew()
-                    .crew()
-                    .kickoff(inputs={
+                qa_result = _kickoff_with_retry(
+                    QACrew(),
+                    inputs={
                         "repo_full_name": repo_full_name,
                         "pr_number": new_pr,
                         "ticket_issue_number": ticket.issue_number,
-                    })
+                    },
                 )
                 qa_data = _parse_json(qa_result.raw)
                 ticket.qa_status = qa_data.get("qa_status", "unknown")
@@ -286,50 +316,48 @@ class SynthForceFlow(Flow[SynthForceState]):
 
     @listen(or_("deploy_ready", handle_qa_failure))
     def deploy(self):
-        """Phase 4: Analyze repo, set up CI/CD, and create release."""
+        """Phase 4: DevOps assesses repo, sets up missing CI/CD, and creates release."""
+        repo_full_name = f"{self.state.repo_owner}/{self.state.repo_name}"
+
         if "devops" in self.state.skip_phases:
             print("[DEVOPS] Skipped (--skip devops)")
-            return {"deployment_status": "skipped", "platform": "skipped"}
+        else:
+            ticket_summaries = "; ".join(
+                f"#{t.issue_number} {t.title}" for t in self.state.tickets
+            )
+            release_tag = self.state.release_tag or "v0.1.0"
 
-        repo_full_name = f"{self.state.repo_owner}/{self.state.repo_name}"
-        ticket_summaries = "; ".join(
-            f"#{t.issue_number} {t.title}" for t in self.state.tickets
-        )
-        release_tag = self.state.release_tag or "v0.1.0"
-
-        print(f"[DEVOPS] Analyzing repo and setting up CI/CD for {repo_full_name}")
-        result = (
-            DevOpsCrew()
-            .crew()
-            .kickoff(
+            print(f"[DEVOPS] Running DevOps crew on {repo_full_name}")
+            result = _kickoff_with_retry(
+                DevOpsCrew(),
                 inputs={
                     "repo_full_name": repo_full_name,
                     "release_tag": release_tag,
                     "release_name": f"Release {release_tag}",
                     "ticket_summaries": ticket_summaries,
-                }
+                },
             )
-        )
-        result_data = _parse_json(result.raw)
-        self.state.deployment_status = result_data.get(
-            "deployment_status", "unknown"
-        )
-        print(f"[DEVOPS] Platform: {result_data.get('platform', '?')}")
-        print(f"[DEVOPS] Status: {self.state.deployment_status}")
+            result_data = _parse_json(result.raw)
+            self.state.deployment_status = result_data.get(
+                "deployment_status", "unknown"
+            )
+            print(f"[DEVOPS] Platform: {result_data.get('platform', '?')}")
+            print(f"[DEVOPS] Status: {self.state.deployment_status}")
 
         # Close all task issues and the epic issue
         from synth_force.tools.github_tools import GitHubUpdateIssueTool
         update_tool = GitHubUpdateIssueTool()
+        close_msg = "All engineering complete. PRs merged to main."
 
         for task in self.state.tasks:
             try:
                 update_tool._run(
                     repo_full_name=repo_full_name,
                     issue_number=task.issue_number,
-                    comment=f"All engineering complete. Released as {release_tag}.",
+                    comment=close_msg,
                     state="closed",
                 )
-                print(f"[DEVOPS] Closed task #{task.issue_number}")
+                print(f"[CLEANUP] Closed task #{task.issue_number}")
             except Exception:
                 pass  # May already be closed
 
@@ -337,12 +365,10 @@ class SynthForceFlow(Flow[SynthForceState]):
         update_tool._run(
             repo_full_name=repo_full_name,
             issue_number=epic_number,
-            comment=f"All tasks completed. Released as {release_tag}.",
+            comment=close_msg,
             state="closed",
         )
-        print(f"[DEVOPS] Closed epic #{epic_number}")
-
-        return result_data
+        print(f"[CLEANUP] Closed epic #{epic_number}")
 
 
 def run():
@@ -411,6 +437,20 @@ def _ensure_ci_workflow(repo_full_name: str):
         commit_message="ci: add CI workflow for pull requests",
     )
     print(f"[CI SETUP] {result}")
+
+    # For Node.js projects, ensure .eslintrc.json exists
+    if ci_platform == "ci-node":
+        eslint_check = GitHubReadFileContentTool()._run(repo_full_name, ".eslintrc.json", "main")
+        if eslint_check.startswith("Error"):
+            from synth_force.tools.github_tools import GitWriteFileTool
+            GitWriteFileTool()._run(
+                repo_full_name=repo_full_name,
+                file_path=".eslintrc.json",
+                content='{\n  "extends": "next/core-web-vitals"\n}\n',
+                branch="main",
+                commit_message="ci: add .eslintrc.json for non-interactive linting",
+            )
+            print("[CI SETUP] Created .eslintrc.json on main")
 
 
 def _merge_pr_safe(repo_full_name: str, pr_number: int):
@@ -570,7 +610,7 @@ def continue_work():
     def _run_qa(repo_name, pr_num, ticket_num):
         """Run QA and return status."""
         print(f"  [QA] Testing PR #{pr_num} for ticket #{ticket_num}")
-        qa_result = QACrew().crew().kickoff(inputs={
+        qa_result = _kickoff_with_retry(QACrew(), inputs={
             "repo_full_name": repo_name,
             "pr_number": pr_num,
             "ticket_issue_number": ticket_num,
@@ -584,7 +624,7 @@ def continue_work():
         """Run engineering → QA with rework loop."""
         print(f"  [{'REWORK ' + str(rework_count) if rework_count else 'ENGINEERING'}] "
               f"#{issue_number} ({label})")
-        result = EngineeringCrew().crew().kickoff(inputs={
+        result = _kickoff_with_retry(EngineeringCrew(), inputs={
             "repo_full_name": repo_name,
             "task_issue_number": issue_number,
         })
@@ -605,7 +645,7 @@ def continue_work():
             attempt += 1
             print(f"\n  [REWORK {attempt}/{max_rework}] "
                   f"Ticket #{ticket_number} failed QA, sending back to engineering...")
-            result = EngineeringCrew().crew().kickoff(inputs={
+            result = _kickoff_with_retry(EngineeringCrew(), inputs={
                 "repo_full_name": repo_name,
                 "task_issue_number": ticket_number,
             })
@@ -654,7 +694,7 @@ def continue_work():
         while qa_status == "failed" and attempt < max_rework:
             attempt += 1
             print(f"\n  [REWORK {attempt}/{max_rework}] Sending back to engineering...")
-            result = EngineeringCrew().crew().kickoff(inputs={
+            result = _kickoff_with_retry(EngineeringCrew(), inputs={
                 "repo_full_name": repo_full_name,
                 "task_issue_number": issue.number,
             })
@@ -774,7 +814,7 @@ def run_crew():
 
     print(f"Running {crew_name} crew on {repo_full_name}")
     print(f"Inputs: {json.dumps(inputs, indent=2)}")
-    result = crew_cls().crew().kickoff(inputs=inputs)
+    result = _kickoff_with_retry(crew_cls(), inputs=inputs)
     print(f"\n{'='*60}")
     print(f"Result:\n{result.raw}")
 

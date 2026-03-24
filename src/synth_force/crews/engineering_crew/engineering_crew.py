@@ -7,6 +7,7 @@ from synth_force.tools.github_tools import (
     GitHubCreateBranchTool,
     GitHubCreateIssueTool,
     GitHubCreatePRTool,
+    GitHubListIssuesTool,
     GitHubMergePRTool,
     GitHubReadFileContentTool,
     GitHubReadIssueTool,
@@ -29,6 +30,7 @@ class EngineeringCrew:
             config=self.agents_config["senior_software_engineer"],  # type: ignore[index]
             tools=[
                 GitHubReadIssueTool(),
+                GitHubListIssuesTool(),
                 GitHubCreateIssueTool(),
                 GitHubReadPRTool(),
                 GitHubReviewPRTool(),
@@ -87,15 +89,15 @@ class EngineeringCrew:
         )
 
     @task
-    def review_code(self) -> Task:
-        return Task(
-            config=self.tasks_config["review_code"],  # type: ignore[index]
-        )
-
-    @task
     def fix_ci_failures(self) -> Task:
         return Task(
             config=self.tasks_config["fix_ci_failures"],  # type: ignore[index]
+        )
+
+    @task
+    def review_code(self) -> Task:
+        return Task(
+            config=self.tasks_config["review_code"],  # type: ignore[index]
         )
 
     @task
