@@ -1,10 +1,25 @@
 create_ticket:
   description: >
     For the task issue #{task_issue_number} in repository '{repo_full_name}',
-    read the task details and create a detailed implementation ticket as a
-    new GitHub issue.
+    read the task details and assess the complexity.
 
-    BEFORE creating a new issue, you MUST check for duplicates:
+    STEP 1 — ASSESS COMPLEXITY:
+    Read the task issue and determine if it is simple or complex:
+    - SIMPLE: Single-file changes, straightforward bug fixes, small UI tweaks,
+      copy changes, adding/removing a single component, or any task that a
+      developer could implement without further breakdown.
+    - COMPLEX: Multi-component features, tasks requiring changes across many
+      files, architectural changes, or tasks that benefit from detailed
+      technical specifications.
+
+    STEP 2A — IF SIMPLE:
+    Do NOT create a new ticket issue. Use the task issue itself as the
+    implementation target. Add the label 'ticket' to the task issue using
+    github_update_issue, then return the task issue details:
+    {{"issue_number": {task_issue_number}, "issue_url": "https://github.com/{repo_full_name}/issues/{task_issue_number}", "title": "<task title>"}}
+
+    STEP 2B — IF COMPLEX:
+    BEFORE creating a new issue, check for duplicates:
     1. Use github_list_issues to list open issues with the 'ticket' label
     2. Check if any existing ticket already covers the same task (references
        #{task_issue_number} or has a matching title/scope)
@@ -40,28 +55,49 @@ implement_code:
        PR number and return the JSON immediately. The review and CI fix steps
        will handle any remaining issues.
     5. IF THE PR DOES NOT EXIST (you just created a new one):
-       a. Read package.json (or requirements.txt / pyproject.toml) to understand
-          what dependencies and frameworks are installed. ONLY use libraries and
-          frameworks that are already in the project dependencies. Do NOT use
-          Tailwind, Bootstrap, or any other framework that is not installed.
-       b. Write the required code files to the branch using git_write_file
-       c. Reference the ticket in the PR body with "Closes #<TICKET_NUMBER>"
+       a. FIRST: Read package.json (or requirements.txt / pyproject.toml) using
+          github_read_file_content. Make a mental list of EVERY dependency.
+          You may ONLY use packages that appear in this file. If a package is
+          not listed, you MUST NOT import it in your code. No exceptions.
+       b. SECOND: Read the existing files you plan to modify (layout.tsx,
+          page.tsx, etc.) to understand current imports and structure.
+       c. THIRD: Write the required code files to the branch using git_write_file.
+          Every import in your code must be either: (1) a package listed in
+          package.json, (2) a relative import to a file that exists or that you
+          are creating, or (3) a Node.js built-in.
+       d. Reference the ticket in the PR body with "Closes #<TICKET_NUMBER>"
 
-    CRITICAL RULES:
-    - If creating a new project, you MUST create package.json (or equivalent)
-      with all required dependencies FIRST before creating any other files.
-    - For Next.js apps: package.json must include next, react, react-dom as
-      dependencies. Also create next.config.js.
-    - For Next.js apps: ensure `.eslintrc.json` exists in the repo root so that
-      `next lint` does not prompt interactively in CI. If it does not exist,
-      create it on your branch with: {{"extends": "next/core-web-vitals"}}
-    - CSS Modules (`.module.css`) cannot use bare `:global()` selectors — they
-      require at least one local class. For global theme styles, use a plain
-      `.css` file (not `.module.css`) or wrap with a local class.
-    - ALL files must go inside the `app/` directory for Next.js App Router.
-      Do NOT create files in root-level `components/`, `styles/`, or `pages/`
-      directories. Components go in `app/components/`, styles in `app/` alongside
-      their components.
+    DEPENDENCY RULES (MOST IMPORTANT — violating these breaks the build):
+    - You MUST read package.json BEFORE writing any code.
+    - You may ONLY import packages that are listed in package.json dependencies
+      or devDependencies. If a package is not there, DO NOT use it.
+    - DO NOT use: Tailwind CSS utility classes (unless tailwindcss is in
+      package.json), Bootstrap, lucide-react, next-themes, shadcn/ui, or ANY
+      other library unless it is in package.json.
+    - If you need a package that is not installed, either:
+      (a) Add it to package.json first by rewriting package.json with the new
+          dependency added, OR
+      (b) Implement the functionality without that package using plain
+          HTML/CSS/JS.
+    - NEVER assume a package is installed. ALWAYS verify by reading package.json.
+
+    FILE RULES:
+    - When you modify a file, you MUST include ALL existing imports and content
+      that you are not intentionally removing. Do NOT write partial files that
+      drop existing imports like './globals.css' or existing components.
+    - If your code imports a file (CSS, component, context, etc.), verify that
+      file exists on the branch. If it does not exist, either create it or
+      remove the import.
+    - CASE SENSITIVITY: Before creating new component directories, read the
+      existing directory structure. If a component already exists (e.g.
+      app/components/Footer/), do NOT create a new directory with different
+      casing (e.g. app/components/footer/). Reuse the existing path exactly.
+    - When the task is to FIX or MODIFY existing components, prefer editing the
+      existing files in their current paths rather than creating new files.
+    - For Next.js App Router: ALL files must go inside the `app/` directory.
+      Do NOT create files in root-level `components/`, `styles/`, or `pages/`.
+    - For Next.js: ensure `.eslintrc.json` exists so `next lint` does not
+      prompt interactively in CI.
 
     Return the PR number, URL, and ticket issue number as JSON:
     {{"pr_number": N, "pr_url": "https://...", "ticket_issue_number": N}}
@@ -111,19 +147,44 @@ fix_ci_failures:
     If ci_status is "failed":
     1. Read the error lines from the check_pr_ci_status output
     2. Diagnose the failure from the error output. Common issues:
+       - "Cannot find module" or "Can't resolve" for CSS/component imports:
+         A file was imported but does not exist on the branch. Read the
+         importing file to see what it expects, then EITHER create the missing
+         file using git_write_file OR fix the import. For example, if
+         layout.tsx imports './globals.css' but that file was not created on
+         the branch, you must create app/globals.css with appropriate content.
+         Always check what files exist on the PR branch before deciding.
+       - "Type error: Cannot find module or type declarations for side-effect
+         import": Same as above — the imported file is missing on the branch.
        - Lint fails with interactive prompt: `next lint` needs `.eslintrc.json`.
          Fix by creating `.eslintrc.json` with {{"extends": "next/core-web-vitals"}}
        - CSS Modules purity error with `:global()` selectors: CSS Modules
          require at least one local class. Use a wrapper class like
          `.themeRoot:global(.theme-light) {{}}` or move global styles to a
          plain `.css` file (not `.module.css`).
-       - "Module not found / Can't resolve": Check the import path is correct.
-         In Next.js, `@/` maps to the project root, so `app/context/ThemeContext.js`
-         is imported as `@/app/context/ThemeContext`. Make sure the file actually
-         exists on the branch.
+       - "Module not found / Can't resolve" for packages: FIRST read
+         package.json to check if the package is actually installed. If the
+         package is NOT in package.json, you have two options:
+         (a) Add the package to package.json by rewriting it with the new
+             dependency, OR
+         (b) Remove the import and rewrite the code to not use that package.
+         If the package IS in package.json, check the import path is correct.
+         In Next.js, `@/` maps to the project root, so
+         `app/context/ThemeContext.js` is imported as
+         `@/app/context/ThemeContext`.
        - Missing config files (tsconfig.json, next.config.js, etc.)
-    3. Read the failing files using github_read_file_content on the PR branch
-    4. Fix the code using git_write_file on the same branch
+       - "File name differs only in casing" error: This means two file paths
+         exist that differ only in case (e.g. components/Footer/ vs
+         components/footer/). You cannot delete files via the GitHub API.
+         Instead, fix ALL imports in the codebase to use the SAME casing as
+         the original file path on main. Read layout.tsx and other importing
+         files to update their import paths to match the existing directory
+         casing exactly. If you created new files in a wrongly-cased directory,
+         rewrite them into the correctly-cased directory path instead.
+    3. Read the failing file AND the file it imports using
+       github_read_file_content on the PR branch to understand what is missing
+    4. Fix the code using git_write_file on the same branch — either create
+       the missing file or fix the import
     5. Wait for CI to re-run by calling check_pr_ci_status again (wait_seconds=120)
     6. Repeat up to 3 attempts if CI keeps failing
 

@@ -24,13 +24,21 @@ software_engineer:
     write the code using the GitWriteFile tool, and open pull requests
     with clear descriptions of what was implemented.
 
-    CRITICAL: Before writing code, always check what dependencies and
-    frameworks are actually installed in the project. Read package.json,
-    requirements.txt, or pyproject.toml first. NEVER use libraries,
-    frameworks, or CSS utilities (e.g. Tailwind, Bootstrap) that are not
-    listed as dependencies. Use only what the project already has. If the
-    project uses plain CSS, write plain CSS — do not use utility classes
-    from uninstalled frameworks.
+    CRITICAL RULE #1 — DEPENDENCY CHECK:
+    Your FIRST action before writing any code MUST be to read package.json
+    (or requirements.txt/pyproject.toml) using github_read_file_content.
+    You may ONLY import packages that appear in that file. If a package is
+    not listed, you MUST NOT use it. Do NOT use Tailwind classes unless
+    tailwindcss is in package.json. Do NOT use lucide-react, next-themes,
+    shadcn/ui, or any other library unless it is in package.json. If you
+    need a missing package, add it to package.json first.
+
+    CRITICAL RULE #2 — READ BEFORE WRITE:
+    Before creating or modifying files, ALWAYS read the existing files first
+    (layout.tsx, page.tsx, etc.) to understand current imports, component
+    structure, and directory casing. When modifying a file, preserve ALL
+    existing imports and content you are not intentionally changing. Prefer
+    editing existing files in-place over creating new replacement files.
 
 software_engineer_2:
   role: >
@@ -44,10 +52,18 @@ software_engineer_2:
     write the code using the GitWriteFile tool, and open pull requests
     with clear descriptions of what was implemented.
 
-    CRITICAL: Before writing code, always check what dependencies and
-    frameworks are actually installed in the project. Read package.json,
-    requirements.txt, or pyproject.toml first. NEVER use libraries,
-    frameworks, or CSS utilities (e.g. Tailwind, Bootstrap) that are not
-    listed as dependencies. Use only what the project already has. If the
-    project uses plain CSS, write plain CSS — do not use utility classes
-    from uninstalled frameworks.
+    CRITICAL RULE #1 — DEPENDENCY CHECK:
+    Your FIRST action before writing any code MUST be to read package.json
+    (or requirements.txt/pyproject.toml) using github_read_file_content.
+    You may ONLY import packages that appear in that file. If a package is
+    not listed, you MUST NOT use it. Do NOT use Tailwind classes unless
+    tailwindcss is in package.json. Do NOT use lucide-react, next-themes,
+    shadcn/ui, or any other library unless it is in package.json. If you
+    need a missing package, add it to package.json first.
+
+    CRITICAL RULE #2 — READ BEFORE WRITE:
+    Before creating or modifying files, ALWAYS read the existing files first
+    (layout.tsx, page.tsx, etc.) to understand current imports, component
+    structure, and directory casing. When modifying a file, preserve ALL
+    existing imports and content you are not intentionally changing. Prefer
+    editing existing files in-place over creating new replacement files.

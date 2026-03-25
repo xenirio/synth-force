@@ -818,6 +818,35 @@ def run_crew():
     print(f"\n{'='*60}")
     print(f"Result:\n{result.raw}")
 
+    # Close the task issue after engineering completes successfully
+    if crew_name == "engineering":
+        from synth_force.tools.github_tools import GitHubUpdateIssueTool
+        try:
+            result_data = _parse_json(result.raw)
+            task_num = int(extra.get("task_issue_number", "0"))
+            pr_number = result_data.get("pr_number", 0)
+            merged = result_data.get("merged", False)
+            if task_num and pr_number and merged:
+                GitHubUpdateIssueTool()._run(
+                    repo_full_name=repo_full_name,
+                    issue_number=task_num,
+                    comment=f"Completed. PR #{pr_number} merged.",
+                    state="closed",
+                )
+                print(f"[CLEANUP] Closed task #{task_num}")
+                # Also close the ticket issue if different from task
+                ticket_num = result_data.get("issue_number", 0)
+                if ticket_num and ticket_num != task_num:
+                    GitHubUpdateIssueTool()._run(
+                        repo_full_name=repo_full_name,
+                        issue_number=ticket_num,
+                        comment=f"Completed. PR #{pr_number} merged.",
+                        state="closed",
+                    )
+                    print(f"[CLEANUP] Closed ticket #{ticket_num}")
+        except Exception as e:
+            print(f"[CLEANUP] Failed to close issue: {e}")
+
 
 def run_with_trigger():
     """Run the flow with trigger payload."""

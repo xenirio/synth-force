@@ -13,6 +13,7 @@ from synth_force.tools.github_tools import (
     GitHubReadIssueTool,
     GitHubReadPRTool,
     GitHubReviewPRTool,
+    GitHubUpdateIssueTool,
     GitWriteFileTool,
 )
 
@@ -32,6 +33,7 @@ class EngineeringCrew:
                 GitHubReadIssueTool(),
                 GitHubListIssuesTool(),
                 GitHubCreateIssueTool(),
+                GitHubUpdateIssueTool(),
                 GitHubReadPRTool(),
                 GitHubReviewPRTool(),
                 GitHubMergePRTool(),
